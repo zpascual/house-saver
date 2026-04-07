@@ -1,11 +1,11 @@
 import { z } from "zod";
 import { getRepository } from "@/lib/data/repository";
-import { getAppUrl } from "@/lib/app-url";
 import { featureFlags } from "@/lib/env";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 const inputSchema = z.object({
   email: z.string().email(),
+  token: z.string().trim().min(6).max(6),
 });
 
 export async function POST(request: Request) {
@@ -35,26 +35,20 @@ export async function POST(request: Request) {
       return Response.json({ error: "Supabase client unavailable." }, { status: 500 });
     }
 
-    const appUrl = getAppUrl(request);
-    const { error } = await supabase.auth.signInWithOtp({
+    const { error } = await supabase.auth.verifyOtp({
       email: payload.email,
-      options: {
-        shouldCreateUser: false,
-        emailRedirectTo: `${appUrl}/auth/callback?next=%2Fhomes`,
-      },
+      token: payload.token,
+      type: "email",
     });
 
     if (error) {
       return Response.json({ error: error.message }, { status: 400 });
     }
 
-    return Response.json({
-      message:
-        "A sign-in email is on the way. If it contains a 6-digit code, paste it below. If it contains a link, use the newest email only.",
-    });
+    return Response.json({ redirectTo: "/homes" });
   } catch (error) {
     return Response.json(
-      { error: error instanceof Error ? error.message : "Could not send sign-in link." },
+      { error: error instanceof Error ? error.message : "Could not verify sign-in code." },
       { status: 400 },
     );
   }

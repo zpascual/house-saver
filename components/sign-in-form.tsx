@@ -1,14 +1,18 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 export function SignInForm() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
+  const [token, setToken] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [codeSent, setCodeSent] = useState(false);
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleRequestCode(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
     setError(null);
@@ -26,8 +30,11 @@ export function SignInForm() {
         throw new Error(payload.error ?? "Could not send sign-in link.");
       }
 
-      setStatus(payload.message ?? "Check your email for the sign-in link.");
-      setEmail("");
+      setCodeSent(true);
+      setStatus(
+        payload.message ??
+          "Check your email for the newest sign-in message, then enter the 6-digit code below.",
+      );
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Could not sign in.");
     } finally {
@@ -35,36 +42,91 @@ export function SignInForm() {
     }
   }
 
+  async function handleVerifyCode(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPending(true);
+    setError(null);
+    setStatus(null);
+
+    try {
+      const response = await fetch("/api/auth/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, token }),
+      });
+
+      const payload = (await response.json()) as { error?: string; redirectTo?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Could not verify sign-in code.");
+      }
+
+      router.push(payload.redirectTo ?? "/homes");
+      router.refresh();
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error ? caughtError.message : "Could not verify sign-in code.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
   return (
-    <form onSubmit={handleSubmit} className="hs-panel grid gap-4 rounded-[2rem] p-6">
+    <div className="hs-panel grid gap-4 rounded-[2rem] p-6">
       <div className="space-y-2">
         <h2 className="font-[family-name:var(--font-space-grotesk)] text-2xl font-semibold text-[#17324f]">
           Sign in with an invited email
         </h2>
         <p className="hs-muted text-sm leading-6">
-          When Supabase is configured, only emails listed in the shared workspace can access saved
-          homes and editing routes.
+          Enter your invited email, then use the newest sign-in email. Typed codes are more
+          reliable than email links because some inbox providers pre-open links.
         </p>
       </div>
-      <label className="hs-label grid gap-2 text-sm font-medium">
-        Email
-        <input
-          type="email"
-          required
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          className="hs-input rounded-2xl px-4 py-3 outline-none"
-        />
-      </label>
-      <button
-        type="submit"
-        disabled={pending}
-        className="hs-button-primary rounded-2xl px-5 py-3 text-sm font-medium transition"
-      >
-        {pending ? "Sending link..." : "Email me a sign-in link"}
-      </button>
+      <form onSubmit={handleRequestCode} className="grid gap-4">
+        <label className="hs-label grid gap-2 text-sm font-medium">
+          Email
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            className="hs-input rounded-2xl px-4 py-3 outline-none"
+          />
+        </label>
+        <button
+          type="submit"
+          disabled={pending}
+          className="hs-button-primary rounded-2xl px-5 py-3 text-sm font-medium transition"
+        >
+          {pending ? "Sending email..." : codeSent ? "Resend sign-in email" : "Send sign-in email"}
+        </button>
+      </form>
+      {codeSent ? (
+        <form onSubmit={handleVerifyCode} className="grid gap-4 rounded-3xl border border-black/10 bg-white/60 p-4">
+          <label className="hs-label grid gap-2 text-sm font-medium">
+            6-digit code
+            <input
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]{6}"
+              maxLength={6}
+              required
+              value={token}
+              onChange={(event) => setToken(event.target.value.replace(/\D/g, "").slice(0, 6))}
+              className="hs-input rounded-2xl px-4 py-3 outline-none"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={pending || token.length !== 6}
+            className="hs-button-primary rounded-2xl px-5 py-3 text-sm font-medium transition"
+          >
+            {pending ? "Verifying code..." : "Verify code"}
+          </button>
+        </form>
+      ) : null}
       {status ? <p className="text-sm text-emerald-700">{status}</p> : null}
       {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-    </form>
+    </div>
   );
 }
