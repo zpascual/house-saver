@@ -1,6 +1,19 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { asc, desc, eq, sql } from "drizzle-orm";
 import { createDefaultState, type AppState } from "@/lib/data/defaults";
+import { getDatabase } from "@/lib/data/db";
+import {
+  commuteCache as commuteCacheTable,
+  crimeSnapshots as crimeSnapshotsTable,
+  crimeSources as crimeSourcesTable,
+  homeImports as homeImportsTable,
+  homeScores as homeScoresTable,
+  homes as homesTable,
+  pois as poisTable,
+  workspaceMembers as workspaceMembersTable,
+  workspaces,
+} from "@/lib/data/schema";
 import {
   AddressSuggestion,
   CommuteCache,
@@ -17,6 +30,7 @@ import {
 } from "@/lib/types";
 
 const demoFile = path.join(process.cwd(), ".data", "demo-store.json");
+const DEFAULT_OWNER_EMAIL = "zacharympascual@gmail.com";
 
 function normalizePoi(poi: PointOfInterest | (Partial<PointOfInterest> & { id: string })) {
   return {
@@ -42,6 +56,14 @@ function withHomeDetails(state: AppState): HomeWithDetails[] {
       const rightRank = right.score?.overallRank ?? Number.MAX_SAFE_INTEGER;
       return leftRank - rightRank || left.displayName.localeCompare(right.displayName);
     });
+}
+
+function sortHomes(homes: HomeWithDetails[]) {
+  return [...homes].sort((left, right) => {
+    const leftRank = left.score?.overallRank ?? Number.MAX_SAFE_INTEGER;
+    const rightRank = right.score?.overallRank ?? Number.MAX_SAFE_INTEGER;
+    return leftRank - rightRank || left.displayName.localeCompare(right.displayName);
+  });
 }
 
 async function ensureDemoFile() {
@@ -207,11 +229,577 @@ function createLocalRepository(): Repository {
   };
 }
 
+function toIso(value: Date | string) {
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+function toNumber(value: unknown) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === "number") {
+    return value;
+  }
+
+  return Number(value);
+}
+
+function toWorkspace(row: typeof workspaces.$inferSelect): Workspace {
+  return {
+    id: row.id,
+    name: row.name,
+    createdAt: toIso(row.createdAt),
+  };
+}
+
+function toMember(row: typeof workspaceMembersTable.$inferSelect): WorkspaceMember {
+  return {
+    id: row.id,
+    workspaceId: row.workspaceId,
+    email: row.email,
+    role: row.role as WorkspaceMember["role"],
+    invitedAt: toIso(row.invitedAt),
+  };
+}
+
+function toHome(row: typeof homesTable.$inferSelect): Home {
+  return {
+    id: row.id,
+    workspaceId: row.workspaceId,
+    displayName: row.displayName,
+    displayNameIsOverridden: row.displayNameIsOverridden,
+    sourceUrl: row.sourceUrl,
+    sourceSite: row.sourceSite as Home["sourceSite"],
+    status: row.status as Home["status"],
+    normalizedAddress: row.normalizedAddress,
+    streetAddress: row.streetAddress,
+    city: row.city,
+    state: row.state,
+    zipCode: row.zipCode,
+    latitude: toNumber(row.latitude),
+    longitude: toNumber(row.longitude),
+    rent: row.rent,
+    beds: toNumber(row.beds),
+    baths: toNumber(row.baths),
+    notes: row.notes,
+    importedPayload: row.importedPayload as Record<string, unknown> | null,
+    overrides: row.overrides,
+    createdAt: toIso(row.createdAt),
+    updatedAt: toIso(row.updatedAt),
+  };
+}
+
+function toHomeImport(row: typeof homeImportsTable.$inferSelect): HomeImport {
+  return {
+    id: row.id,
+    homeId: row.homeId,
+    sourceUrl: row.sourceUrl,
+    sourceSite: row.sourceSite as HomeImport["sourceSite"],
+    status: row.status as HomeImport["status"],
+    importedAt: toIso(row.importedAt),
+    summary: row.summary,
+    extractedData: row.extractedData as Partial<Home>,
+    rawPayload: row.rawPayload as Record<string, unknown> | null,
+    errorMessage: row.errorMessage,
+  };
+}
+
+function toPoi(row: typeof poisTable.$inferSelect): PointOfInterest {
+  return {
+    id: row.id,
+    workspaceId: row.workspaceId,
+    label: row.label,
+    enabled: row.enabled,
+    address: row.address,
+    city: row.city,
+    state: row.state,
+    zipCode: row.zipCode,
+    latitude: toNumber(row.latitude),
+    longitude: toNumber(row.longitude),
+    weight: row.weight,
+    radiusMiles: toNumber(row.radiusMiles) ?? 0,
+    sortOrder: row.sortOrder,
+    createdAt: toIso(row.createdAt),
+    updatedAt: toIso(row.updatedAt),
+  };
+}
+
+function toScore(row: typeof homeScoresTable.$inferSelect): HomeScore {
+  return {
+    id: row.id,
+    homeId: row.homeId,
+    overallScore: toNumber(row.overallScore) ?? 0,
+    overallRank: row.overallRank,
+    insideRadiusCount: row.insideRadiusCount,
+    breakdown: row.breakdown,
+    computedAt: toIso(row.computedAt),
+  };
+}
+
+function toCommuteCache(row: typeof commuteCacheTable.$inferSelect): CommuteCache {
+  return {
+    id: row.id,
+    homeId: row.homeId,
+    poiId: row.poiId,
+    driveMinutes: toNumber(row.driveMinutes) ?? 0,
+    roadMiles: toNumber(row.roadMiles) ?? 0,
+    crowMiles: toNumber(row.crowMiles) ?? 0,
+    source: row.source as CommuteCache["source"],
+    computedAt: toIso(row.computedAt),
+  };
+}
+
+function toCrimeSource(row: typeof crimeSourcesTable.$inferSelect): CrimeSource {
+  return {
+    id: row.id,
+    sourceName: row.sourceName,
+    sourceUrl: row.sourceUrl,
+    jurisdiction: row.jurisdiction,
+    sourceKind: row.sourceKind as CrimeSource["sourceKind"],
+    coverageStatus: row.coverageStatus as CrimeSource["coverageStatus"],
+    scope: row.scope as CrimeSource["scope"],
+    zipCodes: row.zipCodes,
+    active: row.active,
+    notes: row.notes,
+  };
+}
+
+function toCrimeSnapshot(row: typeof crimeSnapshotsTable.$inferSelect): CrimeSnapshot {
+  return {
+    id: row.id,
+    sourceId: row.sourceId,
+    zipCode: row.zipCode,
+    coverageStatus: row.coverageStatus as CrimeSnapshot["coverageStatus"],
+    scope: row.scope as CrimeSnapshot["scope"],
+    incidentCount: row.incidentCount,
+    recentWindowDays: row.recentWindowDays,
+    fetchedAt: toIso(row.fetchedAt),
+    summary: row.summary,
+    sourceName: row.sourceName,
+    sourceUrl: row.sourceUrl,
+  };
+}
+
+function homeRow(home: Home): typeof homesTable.$inferInsert {
+  return {
+    id: home.id,
+    workspaceId: home.workspaceId,
+    displayName: home.displayName,
+    displayNameIsOverridden: home.displayNameIsOverridden,
+    sourceUrl: home.sourceUrl,
+    sourceSite: home.sourceSite,
+    status: home.status,
+    normalizedAddress: home.normalizedAddress,
+    streetAddress: home.streetAddress,
+    city: home.city,
+    state: home.state,
+    zipCode: home.zipCode,
+    latitude: home.latitude === null ? null : home.latitude.toString(),
+    longitude: home.longitude === null ? null : home.longitude.toString(),
+    rent: home.rent,
+    beds: home.beds === null ? null : home.beds.toString(),
+    baths: home.baths === null ? null : home.baths.toString(),
+    notes: home.notes,
+    importedPayload: home.importedPayload,
+    overrides: home.overrides,
+    createdAt: new Date(home.createdAt),
+    updatedAt: new Date(home.updatedAt),
+  };
+}
+
+function homeImportRow(homeImport: HomeImport): typeof homeImportsTable.$inferInsert {
+  return {
+    id: homeImport.id,
+    homeId: homeImport.homeId,
+    sourceUrl: homeImport.sourceUrl,
+    sourceSite: homeImport.sourceSite,
+    status: homeImport.status,
+    importedAt: new Date(homeImport.importedAt),
+    summary: homeImport.summary,
+    extractedData: homeImport.extractedData,
+    rawPayload: homeImport.rawPayload,
+    errorMessage: homeImport.errorMessage,
+  };
+}
+
+function poiRow(poi: PointOfInterest): typeof poisTable.$inferInsert {
+  return {
+    id: poi.id,
+    workspaceId: poi.workspaceId,
+    label: poi.label,
+    enabled: poi.enabled,
+    address: poi.address,
+    city: poi.city,
+    state: poi.state,
+    zipCode: poi.zipCode,
+    latitude: poi.latitude === null ? null : poi.latitude.toString(),
+    longitude: poi.longitude === null ? null : poi.longitude.toString(),
+    weight: poi.weight,
+    radiusMiles: poi.radiusMiles.toString(),
+    sortOrder: poi.sortOrder,
+    createdAt: new Date(poi.createdAt),
+    updatedAt: new Date(poi.updatedAt),
+  };
+}
+
+function scoreRow(score: HomeScore): typeof homeScoresTable.$inferInsert {
+  return {
+    id: score.id,
+    homeId: score.homeId,
+    overallScore: score.overallScore.toString(),
+    overallRank: score.overallRank,
+    insideRadiusCount: score.insideRadiusCount,
+    breakdown: score.breakdown,
+    computedAt: new Date(score.computedAt),
+  };
+}
+
+function commuteRow(item: CommuteCache): typeof commuteCacheTable.$inferInsert {
+  return {
+    id: item.id,
+    homeId: item.homeId,
+    poiId: item.poiId,
+    driveMinutes: item.driveMinutes.toString(),
+    roadMiles: item.roadMiles.toString(),
+    crowMiles: item.crowMiles.toString(),
+    source: item.source,
+    computedAt: new Date(item.computedAt),
+  };
+}
+
+function crimeSourceRow(source: CrimeSource): typeof crimeSourcesTable.$inferInsert {
+  return {
+    id: source.id,
+    sourceName: source.sourceName,
+    sourceUrl: source.sourceUrl,
+    jurisdiction: source.jurisdiction,
+    sourceKind: source.sourceKind,
+    coverageStatus: source.coverageStatus,
+    scope: source.scope,
+    zipCodes: source.zipCodes,
+    active: source.active,
+    notes: source.notes,
+  };
+}
+
+function crimeSnapshotRow(snapshot: CrimeSnapshot): typeof crimeSnapshotsTable.$inferInsert {
+  return {
+    id: snapshot.id,
+    sourceId: snapshot.sourceId,
+    zipCode: snapshot.zipCode,
+    coverageStatus: snapshot.coverageStatus,
+    scope: snapshot.scope,
+    incidentCount: snapshot.incidentCount,
+    recentWindowDays: snapshot.recentWindowDays,
+    fetchedAt: new Date(snapshot.fetchedAt),
+    summary: snapshot.summary,
+    sourceName: snapshot.sourceName,
+    sourceUrl: snapshot.sourceUrl,
+  };
+}
+
+function seedMembers(): WorkspaceMember[] {
+  const now = new Date().toISOString();
+  return [
+    {
+      id: "member-owner",
+      workspaceId: "workspace-default",
+      email: DEFAULT_OWNER_EMAIL,
+      role: "owner",
+      invitedAt: now,
+    },
+  ];
+}
+
+let databaseSeedPromise: Promise<void> | null = null;
+
+async function ensureDatabaseSeeded() {
+  const db = getDatabase();
+  if (!db) {
+    return;
+  }
+
+  if (!databaseSeedPromise) {
+    databaseSeedPromise = (async () => {
+      const [{ count }] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(workspaces);
+
+      if (count === 0) {
+        const defaultState = createDefaultState();
+        const members = seedMembers();
+
+        await db.insert(workspaces).values({
+          id: defaultState.workspace.id,
+          name: defaultState.workspace.name,
+          createdAt: new Date(defaultState.workspace.createdAt),
+        });
+
+        if (members.length > 0) {
+          await db.insert(workspaceMembersTable).values(
+            members.map((member) => ({
+              id: member.id,
+              workspaceId: member.workspaceId,
+              email: member.email,
+              role: member.role,
+              invitedAt: new Date(member.invitedAt),
+            })),
+          );
+        }
+
+        if (defaultState.homes.length > 0) {
+          await db.insert(homesTable).values(defaultState.homes.map(homeRow));
+        }
+        if (defaultState.homeImports.length > 0) {
+          await db.insert(homeImportsTable).values(defaultState.homeImports.map(homeImportRow));
+        }
+        if (defaultState.pois.length > 0) {
+          await db.insert(poisTable).values(defaultState.pois.map(poiRow));
+        }
+        if (defaultState.scores.length > 0) {
+          await db.insert(homeScoresTable).values(defaultState.scores.map(scoreRow));
+        }
+        if (defaultState.commuteCache.length > 0) {
+          await db.insert(commuteCacheTable).values(defaultState.commuteCache.map(commuteRow));
+        }
+        if (defaultState.crimeSources.length > 0) {
+          await db.insert(crimeSourcesTable).values(defaultState.crimeSources.map(crimeSourceRow));
+        }
+        if (defaultState.crimeSnapshots.length > 0) {
+          await db.insert(crimeSnapshotsTable).values(
+            defaultState.crimeSnapshots.map(crimeSnapshotRow),
+          );
+        }
+      } else {
+        await db
+          .insert(workspaceMembersTable)
+          .values({
+            id: createId("member"),
+            workspaceId: "workspace-default",
+            email: DEFAULT_OWNER_EMAIL,
+            role: "owner",
+            invitedAt: new Date(),
+          })
+          .onConflictDoNothing();
+      }
+    })();
+  }
+
+  await databaseSeedPromise;
+}
+
+function createDatabaseRepository(): Repository {
+  return {
+    async getDashboardData() {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+
+      const [workspaceRows, memberRows, homeRows, importRows, poiRows, scoreRows, crimeSourceRows, crimeSnapshotRows, commuteRows] =
+        await Promise.all([
+          db.select().from(workspaces),
+          db.select().from(workspaceMembersTable).orderBy(asc(workspaceMembersTable.invitedAt)),
+          db.select().from(homesTable),
+          db.select().from(homeImportsTable).orderBy(desc(homeImportsTable.importedAt)),
+          db.select().from(poisTable).orderBy(asc(poisTable.sortOrder)),
+          db.select().from(homeScoresTable),
+          db.select().from(crimeSourcesTable),
+          db.select().from(crimeSnapshotsTable),
+          db.select().from(commuteCacheTable),
+        ]);
+
+      const workspace = workspaceRows[0] ? toWorkspace(workspaceRows[0]) : createDefaultState().workspace;
+      const members = memberRows.map(toMember);
+      const homes = homeRows.map(toHome);
+      const imports = importRows.map(toHomeImport);
+      const pois = poiRows.map(toPoi);
+      const scores = scoreRows.map(toScore);
+      const crimeSources = crimeSourceRows.map(toCrimeSource);
+      const crimeSnapshots = crimeSnapshotRows.map(toCrimeSnapshot);
+      const commuteCache = commuteRows.map(toCommuteCache);
+
+      const homeDetails = sortHomes(
+        homes.map((home) => ({
+          ...home,
+          latestImport:
+            imports.filter((item) => item.homeId === home.id).sort((a, b) => b.importedAt.localeCompare(a.importedAt))[0] ??
+            null,
+          score: scores.find((score) => score.homeId === home.id) ?? null,
+          crimeSnapshot: crimeSnapshots.find((snapshot) => snapshot.zipCode === home.zipCode) ?? null,
+        })),
+      );
+
+      return {
+        workspace,
+        members,
+        homes: homeDetails,
+        pois,
+        scores,
+        crimeSnapshots,
+        crimeSources,
+        commuteCache,
+      };
+    },
+    async getWorkspace() {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      const [workspace] = await db.select().from(workspaces).limit(1);
+      return workspace ? toWorkspace(workspace) : createDefaultState().workspace;
+    },
+    async listMembers() {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      const rows = await db.select().from(workspaceMembersTable).orderBy(asc(workspaceMembersTable.invitedAt));
+      return rows.map(toMember);
+    },
+    async listHomes() {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      const rows = await db.select().from(homesTable);
+      return rows.map(toHome);
+    },
+    async getHome(id) {
+      const data = await this.getDashboardData();
+      return data.homes.find((home) => home.id === id) ?? null;
+    },
+    async saveHome(home) {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      await db.insert(homesTable).values(homeRow(home)).onConflictDoUpdate({
+        target: homesTable.id,
+        set: {
+          workspaceId: home.workspaceId,
+          displayName: home.displayName,
+          displayNameIsOverridden: home.displayNameIsOverridden,
+          sourceUrl: home.sourceUrl,
+          sourceSite: home.sourceSite,
+          status: home.status,
+          normalizedAddress: home.normalizedAddress,
+          streetAddress: home.streetAddress,
+          city: home.city,
+          state: home.state,
+          zipCode: home.zipCode,
+          latitude: home.latitude === null ? null : home.latitude.toString(),
+          longitude: home.longitude === null ? null : home.longitude.toString(),
+          rent: home.rent,
+          beds: home.beds === null ? null : home.beds.toString(),
+          baths: home.baths === null ? null : home.baths.toString(),
+          notes: home.notes,
+          importedPayload: home.importedPayload,
+          overrides: home.overrides,
+          updatedAt: new Date(home.updatedAt),
+        },
+      });
+      return home;
+    },
+    async deleteHome(id) {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      const deleted = await db.delete(homesTable).where(eq(homesTable.id, id)).returning({ id: homesTable.id });
+      return deleted.length > 0;
+    },
+    async listImports(homeId) {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      const rows = homeId
+        ? await db
+            .select()
+            .from(homeImportsTable)
+            .where(eq(homeImportsTable.homeId, homeId))
+            .orderBy(desc(homeImportsTable.importedAt))
+        : await db.select().from(homeImportsTable).orderBy(desc(homeImportsTable.importedAt));
+      return rows.map(toHomeImport);
+    },
+    async saveImport(homeImport) {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      await db.insert(homeImportsTable).values(homeImportRow(homeImport)).onConflictDoUpdate({
+        target: homeImportsTable.id,
+        set: {
+          homeId: homeImport.homeId,
+          sourceUrl: homeImport.sourceUrl,
+          sourceSite: homeImport.sourceSite,
+          status: homeImport.status,
+          importedAt: new Date(homeImport.importedAt),
+          summary: homeImport.summary,
+          extractedData: homeImport.extractedData,
+          rawPayload: homeImport.rawPayload,
+          errorMessage: homeImport.errorMessage,
+        },
+      });
+      return homeImport;
+    },
+    async listPois() {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      const rows = await db.select().from(poisTable).orderBy(asc(poisTable.sortOrder));
+      return rows.map(toPoi);
+    },
+    async replacePois(pois) {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      await db.delete(poisTable).where(eq(poisTable.workspaceId, "workspace-default"));
+      if (pois.length > 0) {
+        await db.insert(poisTable).values(pois.map(poiRow));
+      }
+      return pois.map(normalizePoi);
+    },
+    async listScores() {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      const rows = await db.select().from(homeScoresTable);
+      return rows.map(toScore);
+    },
+    async saveScores(scores, cache) {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      await db.delete(homeScoresTable);
+      await db.delete(commuteCacheTable);
+      if (scores.length > 0) {
+        await db.insert(homeScoresTable).values(scores.map(scoreRow));
+      }
+      if (cache.length > 0) {
+        await db.insert(commuteCacheTable).values(cache.map(commuteRow));
+      }
+    },
+    async listCommuteCache() {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      const rows = await db.select().from(commuteCacheTable);
+      return rows.map(toCommuteCache);
+    },
+    async listCrimeSources() {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      const rows = await db.select().from(crimeSourcesTable);
+      return rows.map(toCrimeSource);
+    },
+    async listCrimeSnapshots() {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      const rows = await db.select().from(crimeSnapshotsTable);
+      return rows.map(toCrimeSnapshot);
+    },
+    async upsertCrimeData(payload) {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      await db.delete(crimeSnapshotsTable);
+      await db.delete(crimeSourcesTable);
+      if (payload.sources.length > 0) {
+        await db.insert(crimeSourcesTable).values(payload.sources.map(crimeSourceRow));
+      }
+      if (payload.snapshots.length > 0) {
+        await db.insert(crimeSnapshotsTable).values(payload.snapshots.map(crimeSnapshotRow));
+      }
+    },
+  };
+}
+
 let repositoryInstance: Repository | null = null;
 
 export function getRepository() {
   if (!repositoryInstance) {
-    repositoryInstance = createLocalRepository();
+    repositoryInstance = getDatabase() ? createDatabaseRepository() : createLocalRepository();
   }
 
   return repositoryInstance;
