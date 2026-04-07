@@ -1,8 +1,8 @@
-import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { featureFlags, env, supabasePublicKey } from "@/lib/env";
 import { getRepository } from "@/lib/data/repository";
+import { createClient } from "@/utils/supabase/server";
 
 export async function getSupabaseServerClient() {
   if (!featureFlags.hasSupabase || !supabasePublicKey) {
@@ -10,27 +10,7 @@ export async function getSupabaseServerClient() {
   }
 
   const cookieStore = await cookies();
-
-  return createServerClient(
-    env.NEXT_PUBLIC_SUPABASE_URL!,
-    supabasePublicKey,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) => {
-              cookieStore.set(name, value, options);
-            });
-          } catch {
-            // Server Components cannot always set cookies. Route handlers still can.
-          }
-        },
-      },
-    },
-  );
+  return createClient(cookieStore);
 }
 
 export async function getWorkspaceUser() {
