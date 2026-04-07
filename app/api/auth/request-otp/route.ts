@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { getRepository } from "@/lib/data/repository";
+import { getAppUrl } from "@/lib/app-url";
 import { featureFlags } from "@/lib/env";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -34,11 +35,11 @@ export async function POST(request: Request) {
       return Response.json({ error: "Supabase client unavailable." }, { status: 500 });
     }
 
-    const origin = new URL(request.url).origin;
+    const appUrl = getAppUrl(request);
     const { error } = await supabase.auth.signInWithOtp({
       email: payload.email,
       options: {
-        emailRedirectTo: `${origin}/auth/callback`,
+        emailRedirectTo: `${appUrl}/auth/callback?next=%2Fhomes`,
       },
     });
 
