@@ -1,0 +1,93 @@
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { featureFlags, env, supabasePublicKey } from "@/lib/env";
+import { getRepository } from "@/lib/data/repository";
+
+export async function getSupabaseServerClient() {
+  if (!featureFlags.hasSupabase || !supabasePublicKey) {
+    return null;
+  }
+
+  const cookieStore = await cookies();
+
+  return createServerClient(
+    env.NEXT_PUBLIC_SUPABASE_URL!,
+    supabasePublicKey,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+            });
+          } catch {
+            // Server Components cannot always set cookies. Route handlers still can.
+          }
+        },
+      },
+    },
+  );
+}
+
+export async function getWorkspaceUser() {
+  const supabase = await getSupabaseServerClient();
+  if (!supabase) {
+    return null;
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user?.email) {
+    return null;
+  }
+
+  const members = await getRepository().listMembers();
+  const allowed = members.some(
+    (member) => member.email.toLowerCase() === user.email!.toLowerCase(),
+  );
+
+  return allowed ? user : null;
+}
+
+export async function requireWorkspacePageAccess() {
+  if (!featureFlags.authEnabled) {
+    return null;
+  }
+
+  const user = await getWorkspaceUser();
+  if (!user) {
+    redirect("/sign-in");
+  }
+
+  return user;
+}
+
+export async function assertWorkspaceApiAccess() {
+  if (!featureFlags.authEnabled) {
+    return null;
+  }
+
+  const user = await getWorkspaceUser();
+  if (!user) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  return null;
+}
+
+export function hasValidCronSecret(request: Request) {
+  if (!env.CRON_SECRET) {
+    return false;
+  }
+
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  const headerToken = request.headers.get("x-cron-secret");
+
+  return bearerToken === env.CRON_SECRET || headerToken === env.CRON_SECRET;
+}
