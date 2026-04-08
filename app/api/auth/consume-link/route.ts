@@ -13,7 +13,7 @@ const inputSchema = z.object({
 function buildErrorRedirect(request: Request, message: string) {
   const errorUrl = new URL("/sign-in", getAppUrl(request));
   errorUrl.searchParams.set("error", message);
-  return NextResponse.redirect(errorUrl);
+  return NextResponse.redirect(errorUrl, { status: 303 });
 }
 
 async function consumeLink(request: Request, values: { token_hash: FormDataEntryValue | null; type: FormDataEntryValue | null; next: FormDataEntryValue | null }) {
@@ -45,7 +45,9 @@ async function consumeLink(request: Request, values: { token_hash: FormDataEntry
     );
   }
 
-  return NextResponse.redirect(new URL(getSafeNextPath(parsed.data.next), appUrl));
+  return NextResponse.redirect(new URL(getSafeNextPath(parsed.data.next), appUrl), {
+    status: 303,
+  });
 }
 
 export async function GET(request: Request) {

@@ -11,7 +11,7 @@ const inputSchema = z.object({
 function buildErrorRedirect(request: Request, message: string) {
   const errorUrl = new URL("/sign-in", getAppUrl(request));
   errorUrl.searchParams.set("error", message);
-  return NextResponse.redirect(errorUrl);
+  return NextResponse.redirect(errorUrl, { status: 303 });
 }
 
 async function startOAuthSignIn(request: Request, values: { provider: FormDataEntryValue | null; next: FormDataEntryValue | null }) {
@@ -48,7 +48,7 @@ async function startOAuthSignIn(request: Request, values: { provider: FormDataEn
     );
   }
 
-  return NextResponse.redirect(data.url);
+  return NextResponse.redirect(data.url, { status: 303 });
 }
 
 export async function GET(request: Request) {
