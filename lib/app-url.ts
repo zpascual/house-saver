@@ -3,7 +3,7 @@ import { env } from "@/lib/env";
 export function getAppUrl(request?: Request) {
   const configuredUrl = env.APP_URL ?? env.NEXT_PUBLIC_APP_URL;
   if (configuredUrl) {
-    return configuredUrl.replace(/\/$/, "");
+    return configuredUrl.trim().replace(/\/$/, "");
   }
 
   if (request) {
