@@ -10,26 +10,27 @@ const inputSchema = z.object({
   next: z.string().optional(),
 });
 
-export async function POST(request: Request) {
-  const formData = await request.formData();
+function buildErrorRedirect(request: Request, message: string) {
+  const errorUrl = new URL("/sign-in", getAppUrl(request));
+  errorUrl.searchParams.set("error", message);
+  return NextResponse.redirect(errorUrl);
+}
+
+async function consumeLink(request: Request, values: { token_hash: FormDataEntryValue | null; type: FormDataEntryValue | null; next: FormDataEntryValue | null }) {
   const parsed = inputSchema.safeParse({
-    token_hash: formData.get("token_hash"),
-    type: formData.get("type"),
-    next: formData.get("next"),
+    token_hash: values.token_hash,
+    type: values.type,
+    next: values.next,
   });
 
-  const appUrl = getAppUrl(request);
   if (!parsed.success) {
-    const errorUrl = new URL("/sign-in", appUrl);
-    errorUrl.searchParams.set("error", "This sign-in link is incomplete. Request a new email.");
-    return NextResponse.redirect(errorUrl);
+    return buildErrorRedirect(request, "This sign-in link is incomplete. Request a new email.");
   }
 
+  const appUrl = getAppUrl(request);
   const supabase = await getSupabaseServerClient();
   if (!supabase) {
-    const errorUrl = new URL("/sign-in", appUrl);
-    errorUrl.searchParams.set("error", "Supabase sign-in is not configured yet.");
-    return NextResponse.redirect(errorUrl);
+    return buildErrorRedirect(request, "Supabase sign-in is not configured yet.");
   }
 
   const { error } = await supabase.auth.verifyOtp({
@@ -38,13 +39,29 @@ export async function POST(request: Request) {
   });
 
   if (error) {
-    const errorUrl = new URL("/sign-in", appUrl);
-    errorUrl.searchParams.set(
-      "error",
+    return buildErrorRedirect(
+      request,
       "That sign-in link is invalid or expired. Request the newest email and try again.",
     );
-    return NextResponse.redirect(errorUrl);
   }
 
   return NextResponse.redirect(new URL(getSafeNextPath(parsed.data.next), appUrl));
+}
+
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  return consumeLink(request, {
+    token_hash: url.searchParams.get("token_hash"),
+    type: url.searchParams.get("type"),
+    next: url.searchParams.get("next"),
+  });
+}
+
+export async function POST(request: Request) {
+  const formData = await request.formData();
+  return consumeLink(request, {
+    token_hash: formData.get("token_hash"),
+    type: formData.get("type"),
+    next: formData.get("next"),
+  });
 }

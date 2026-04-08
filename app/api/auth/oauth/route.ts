@@ -8,25 +8,26 @@ const inputSchema = z.object({
   next: z.string().optional(),
 });
 
-export async function POST(request: Request) {
-  const formData = await request.formData();
+function buildErrorRedirect(request: Request, message: string) {
+  const errorUrl = new URL("/sign-in", getAppUrl(request));
+  errorUrl.searchParams.set("error", message);
+  return NextResponse.redirect(errorUrl);
+}
+
+async function startOAuthSignIn(request: Request, values: { provider: FormDataEntryValue | null; next: FormDataEntryValue | null }) {
   const parsed = inputSchema.safeParse({
-    provider: formData.get("provider"),
-    next: formData.get("next"),
+    provider: values.provider,
+    next: values.next,
   });
 
-  const appUrl = getAppUrl(request);
   if (!parsed.success) {
-    const errorUrl = new URL("/sign-in", appUrl);
-    errorUrl.searchParams.set("error", "That sign-in provider is not available.");
-    return NextResponse.redirect(errorUrl);
+    return buildErrorRedirect(request, "That sign-in provider is not available.");
   }
 
+  const appUrl = getAppUrl(request);
   const supabase = await getSupabaseServerClient();
   if (!supabase) {
-    const errorUrl = new URL("/sign-in", appUrl);
-    errorUrl.searchParams.set("error", "Supabase sign-in is not configured yet.");
-    return NextResponse.redirect(errorUrl);
+    return buildErrorRedirect(request, "Supabase sign-in is not configured yet.");
   }
 
   const next = getSafeNextPath(parsed.data.next);
@@ -41,13 +42,27 @@ export async function POST(request: Request) {
   });
 
   if (error || !data.url) {
-    const errorUrl = new URL("/sign-in", appUrl);
-    errorUrl.searchParams.set(
-      "error",
+    return buildErrorRedirect(
+      request,
       error?.message ?? "Could not start Google sign-in. Check the provider configuration.",
     );
-    return NextResponse.redirect(errorUrl);
   }
 
   return NextResponse.redirect(data.url);
+}
+
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  return startOAuthSignIn(request, {
+    provider: url.searchParams.get("provider"),
+    next: url.searchParams.get("next"),
+  });
+}
+
+export async function POST(request: Request) {
+  const formData = await request.formData();
+  return startOAuthSignIn(request, {
+    provider: formData.get("provider"),
+    next: formData.get("next"),
+  });
 }
