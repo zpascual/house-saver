@@ -6,6 +6,7 @@ const navItems = [
   { href: "/homes", label: "Homes" },
   { href: "/map", label: "Map" },
   { href: "/settings/points-of-interest", label: "POIs" },
+  { href: "/settings/access", label: "Access" },
 ];
 
 export function AppShell({

@@ -14,6 +14,11 @@ export async function getSupabaseServerClient() {
 }
 
 export async function getWorkspaceUser() {
+  const membership = await getWorkspaceMembership();
+  if (!membership) {
+    return null;
+  }
+
   const supabase = await getSupabaseServerClient();
   if (!supabase) {
     return null;
@@ -27,12 +32,32 @@ export async function getWorkspaceUser() {
     return null;
   }
 
-  const members = await getRepository().listMembers();
-  const allowed = members.some(
-    (member) => member.email.toLowerCase() === user.email!.toLowerCase(),
-  );
+  return membership.email.toLowerCase() === user.email.toLowerCase() ? user : null;
+}
 
-  return allowed ? user : null;
+export async function getWorkspaceMembership() {
+  const members = await getRepository().listMembers();
+
+  if (!featureFlags.authEnabled) {
+    return members.find((member) => member.role === "owner") ?? members[0] ?? null;
+  }
+
+  const supabase = await getSupabaseServerClient();
+  if (!supabase) {
+    return null;
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user?.email) {
+    return null;
+  }
+
+  return (
+    members.find((member) => member.email.toLowerCase() === user.email!.toLowerCase()) ?? null
+  );
 }
 
 export async function requireWorkspacePageAccess() {
@@ -48,6 +73,24 @@ export async function requireWorkspacePageAccess() {
   return user;
 }
 
+export async function requireWorkspaceOwnerPageAccess() {
+  const membership = await getWorkspaceMembership();
+
+  if (!membership) {
+    if (featureFlags.authEnabled) {
+      redirect("/sign-in");
+    }
+
+    redirect("/homes");
+  }
+
+  if (membership.role !== "owner") {
+    redirect("/homes");
+  }
+
+  return membership;
+}
+
 export async function assertWorkspaceApiAccess() {
   if (!featureFlags.authEnabled) {
     return null;
@@ -56,6 +99,20 @@ export async function assertWorkspaceApiAccess() {
   const user = await getWorkspaceUser();
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  return null;
+}
+
+export async function assertWorkspaceOwnerApiAccess() {
+  const membership = await getWorkspaceMembership();
+
+  if (!membership) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (membership.role !== "owner") {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
   return null;

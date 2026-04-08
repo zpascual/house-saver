@@ -95,6 +95,11 @@ export interface Repository {
   getDashboardData(): Promise<DashboardData>;
   getWorkspace(): Promise<Workspace>;
   listMembers(): Promise<WorkspaceMember[]>;
+  addMember(input: {
+    email: string;
+    role?: WorkspaceMember["role"];
+  }): Promise<WorkspaceMember>;
+  removeMember(id: string): Promise<boolean>;
   listHomes(): Promise<Home[]>;
   getHome(id: string): Promise<HomeWithDetails | null>;
   saveHome(home: Home): Promise<Home>;
@@ -135,6 +140,43 @@ function createLocalRepository(): Repository {
     },
     async listMembers() {
       return (await readState()).members;
+    },
+    async addMember(input) {
+      const state = await readState();
+      const email = input.email.trim().toLowerCase();
+      const existing = state.members.find((member) => member.email.toLowerCase() === email);
+
+      if (existing) {
+        throw new Error("That email already has access.");
+      }
+
+      const member: WorkspaceMember = {
+        id: createId("member"),
+        workspaceId: state.workspace.id,
+        email,
+        role: input.role ?? "editor",
+        invitedAt: new Date().toISOString(),
+      };
+
+      state.members.push(member);
+      await writeState(state);
+      return member;
+    },
+    async removeMember(id) {
+      const state = await readState();
+      const member = state.members.find((item) => item.id === id);
+
+      if (!member) {
+        return false;
+      }
+
+      if (member.role === "owner") {
+        throw new Error("Owners cannot be removed from this page.");
+      }
+
+      state.members = state.members.filter((item) => item.id !== id);
+      await writeState(state);
+      return true;
     },
     async listHomes() {
       return (await readState()).homes;
@@ -651,6 +693,55 @@ function createDatabaseRepository(): Repository {
       const db = getDatabase()!;
       const rows = await db.select().from(workspaceMembersTable).orderBy(asc(workspaceMembersTable.invitedAt));
       return rows.map(toMember);
+    },
+    async addMember(input) {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      const email = input.email.trim().toLowerCase();
+      const existingRows = await db.select().from(workspaceMembersTable);
+      const existing = existingRows.find((member) => member.email.toLowerCase() === email);
+
+      if (existing) {
+        throw new Error("That email already has access.");
+      }
+
+      const member: WorkspaceMember = {
+        id: createId("member"),
+        workspaceId: "workspace-default",
+        email,
+        role: input.role ?? "editor",
+        invitedAt: new Date().toISOString(),
+      };
+
+      await db.insert(workspaceMembersTable).values({
+        id: member.id,
+        workspaceId: member.workspaceId,
+        email: member.email,
+        role: member.role,
+        invitedAt: new Date(member.invitedAt),
+      });
+
+      return member;
+    },
+    async removeMember(id) {
+      await ensureDatabaseSeeded();
+      const db = getDatabase()!;
+      const [member] = await db
+        .select()
+        .from(workspaceMembersTable)
+        .where(eq(workspaceMembersTable.id, id))
+        .limit(1);
+
+      if (!member) {
+        return false;
+      }
+
+      if (member.role === "owner") {
+        throw new Error("Owners cannot be removed from this page.");
+      }
+
+      await db.delete(workspaceMembersTable).where(eq(workspaceMembersTable.id, id));
+      return true;
     },
     async listHomes() {
       await ensureDatabaseSeeded();
