@@ -78,9 +78,27 @@ export function SignInForm({ initialError = null }: { initialError?: string | nu
           Sign in with an invited email
         </h2>
         <p className="hs-muted text-sm leading-6">
-          Enter your invited email, then use the newest sign-in email. You can click the email
-          link or, if needed, enter the numeric code manually.
+          Use Google for one-click access, or enter your invited email and use the newest sign-in
+          email. The app still checks the workspace invite list after sign-in.
         </p>
+      </div>
+      <form action="/api/auth/oauth" method="post" className="grid gap-4">
+        <input type="hidden" name="provider" value="google" />
+        <input type="hidden" name="next" value="/homes" />
+        <button
+          type="submit"
+          className="flex items-center justify-center gap-3 rounded-2xl border border-[rgba(124,144,160,0.24)] bg-white/90 px-5 py-3 text-sm font-medium text-[#17324f] transition hover:border-[#034078]/30 hover:bg-white"
+        >
+          <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white text-[13px] font-semibold text-[#034078] shadow-[0_4px_12px_-8px_rgba(3,64,120,0.8)]">
+            G
+          </span>
+          Continue with Google
+        </button>
+      </form>
+      <div className="flex items-center gap-3 text-xs uppercase tracking-[0.24em] text-[#7c90a0]">
+        <div className="h-px flex-1 bg-[rgba(124,144,160,0.24)]" />
+        <span>Email</span>
+        <div className="h-px flex-1 bg-[rgba(124,144,160,0.24)]" />
       </div>
       <form onSubmit={handleRequestCode} className="grid gap-4">
         <label className="hs-label grid gap-2 text-sm font-medium">

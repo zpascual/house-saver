@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { type EmailOtpType } from "@supabase/supabase-js";
 import { getAppUrl, getSafeNextPath } from "@/lib/app-url";
+import { getRepository } from "@/lib/data/repository";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export async function GET(request: Request) {
@@ -10,6 +11,7 @@ export async function GET(request: Request) {
   const type = url.searchParams.get("type") as EmailOtpType | null;
   const next = getSafeNextPath(url.searchParams.get("next"));
   const supabase = await getSupabaseServerClient();
+  const appUrl = getAppUrl(request);
 
   if (supabase) {
     if (code) {
@@ -20,7 +22,29 @@ export async function GET(request: Request) {
         type,
       });
     }
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (user?.email) {
+      const members = await getRepository().listMembers();
+      const allowed = members.some(
+        (member) => member.email.toLowerCase() === user.email!.toLowerCase(),
+      );
+
+      if (!allowed) {
+        await supabase.auth.signOut();
+
+        const errorUrl = new URL("/sign-in", appUrl);
+        errorUrl.searchParams.set(
+          "error",
+          "That account is not invited to this shared workspace.",
+        );
+        return NextResponse.redirect(errorUrl);
+      }
+    }
   }
 
-  return NextResponse.redirect(new URL(next, getAppUrl(request)));
+  return NextResponse.redirect(new URL(next, appUrl));
 }
