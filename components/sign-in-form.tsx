@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-export function SignInForm() {
+export function SignInForm({ initialError = null }: { initialError?: string | null }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [token, setToken] = useState("");
@@ -78,8 +78,8 @@ export function SignInForm() {
           Sign in with an invited email
         </h2>
         <p className="hs-muted text-sm leading-6">
-          Enter your invited email, then use the newest sign-in email. Typed codes are more
-          reliable than email links because some inbox providers pre-open links.
+          Enter your invited email, then use the newest sign-in email. You can click the email
+          link or, if needed, enter the numeric code manually.
         </p>
       </div>
       <form onSubmit={handleRequestCode} className="grid gap-4">
@@ -127,6 +127,7 @@ export function SignInForm() {
       ) : null}
       {status ? <p className="text-sm text-emerald-700">{status}</p> : null}
       {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+      {!error && initialError ? <p className="text-sm text-rose-600">{initialError}</p> : null}
     </div>
   );
 }
