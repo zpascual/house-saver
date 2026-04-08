@@ -5,7 +5,7 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 const inputSchema = z.object({
   email: z.string().email(),
-  token: z.string().trim().min(6).max(6),
+  token: z.string().trim().regex(/^\d{6,10}$/, "Enter the numeric sign-in code from your email."),
 });
 
 export async function POST(request: Request) {

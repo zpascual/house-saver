@@ -33,7 +33,7 @@ export function SignInForm() {
       setCodeSent(true);
       setStatus(
         payload.message ??
-          "Check your email for the newest sign-in message, then enter the 6-digit code below.",
+          "Check your email for the newest sign-in message, then enter the numeric code below.",
       );
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Could not sign in.");
@@ -104,21 +104,21 @@ export function SignInForm() {
       {codeSent ? (
         <form onSubmit={handleVerifyCode} className="grid gap-4 rounded-3xl border border-black/10 bg-white/60 p-4">
           <label className="hs-label grid gap-2 text-sm font-medium">
-            6-digit code
+            Email sign-in code
             <input
               inputMode="numeric"
               autoComplete="one-time-code"
-              pattern="[0-9]{6}"
-              maxLength={6}
+              pattern="[0-9]{6,10}"
+              maxLength={10}
               required
               value={token}
-              onChange={(event) => setToken(event.target.value.replace(/\D/g, "").slice(0, 6))}
+              onChange={(event) => setToken(event.target.value.replace(/\D/g, "").slice(0, 10))}
               className="hs-input rounded-2xl px-4 py-3 outline-none"
             />
           </label>
           <button
             type="submit"
-            disabled={pending || token.length !== 6}
+            disabled={pending || token.length < 6}
             className="hs-button-primary rounded-2xl px-5 py-3 text-sm font-medium transition"
           >
             {pending ? "Verifying code..." : "Verify code"}
